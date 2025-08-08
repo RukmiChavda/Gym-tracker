@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Gym Progress Tracker</title>
+<style>
+  :root{
+    --bg:#0f1112;
+    --card:#161718;
+    --muted:#9aa0a6;
+    --accent:#43a047;
+    --danger:#d32f2f;
+    --text:#e8e8e8;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}
+  header{position:sticky;top:0;z-index:20;background:var(--card);display:flex;gap:8px;align-items:center;padding:10px;justify-content:space-between;border-bottom:1px solid #222}
+  .nav-left{display:flex;gap:8px;align-items:center}
+  .nav-right{display:flex;gap:8px;align-items:center}
+  button, input[type="date"], input[type="text"], textarea {font-size:16px}
+  .btn {background:var(--accent);color:#fff;border:0;padding:10px 12px;border-radius:8px;cursor:pointer}
+  .btn.ghost{background:#2b2b2b}
+  .btn.small{padding:6px 8px;font-size:14px}
+  .btn.danger{background:var(--danger)}
+  main{padding:14px;max-width:900px;margin:0 auto;}
+  h2{margin:6px 0 12px 0;font-size:18px}
+  .container{display:block}
+  .card{background:var(--card);padding:12px;border-radius:10px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,0.3)}
+  .exercise{background:#131415;padding:12px;border-radius:8px;margin-bottom:10px}
+  .exercise h3{margin:0 0 8px 0;color:#b7f18b}
+  .setsContainer{display:flex;flex-direction:column;gap:8px}
+  .setRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .setRow input{padding:10px;border-radius:8px;border:0;background:#191a1b;color:var(--text);min-width:80px}
+  .setRow .xbtn{background:#2b2b2b;border-radius:8px;padding:8px 10px;border:0;color:var(--text);cursor:pointer}
+  label{display:block;margin-bottom:6px;color:var(--muted)}
+  textarea,input[type="text"]{width:100%;padding:10px;border-radius:8px;border:0;background:#191a1b;color:var(--text)}
+  .flex-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  footer{padding:20px;text-align:center;color:var(--muted)}
+  @media (max-width:720px){
+    .setRow input{flex-basis:28%}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="nav-left">
+    <button class="btn ghost" onclick="showPage('tracker')">Tracker</button>
+    <button class="btn ghost" onclick="showPage('schedule')">Set My Schedule</button>
+  </div>
+
+  <div class="nav-right">
+    <input type="date" id="topDate" style="padding:8px;border-radius:8px;border:0;background:#101213;color:var(--text)" onchange="onTopDateChange()" />
+    <button class="btn" onclick="downloadData()">⬇️ Download</button>
+  </div>
+</header>
+
+<main>
+  <!-- Tracker Page -->
+  <section id="tracker" class="container">
+    <div class="card">
+      <h2>Gym Tracker</h2>
+      <label>Select Date</label>
+      <input type="date" id="trackDate" onchange="loadWorkout()" />
+    </div>
+
+    <div id="workoutContainer" class="card" style="min-height:120px;">
+      <div class="flex-row" style="justify-content:center;color:var(--muted)">
+        Pick a date (top) or below, then set your workout schedule first (Set My Schedule).
+      </div>
+    </div>
+
+    <div style="margin-top:8px">
+      <button class="btn" onclick="saveWorkout()">💾 Save Workout</button>
+    </div>
+  </section>
+
+  <!-- Schedule Page -->
+  <section id="schedule" class="container" style="display:none">
+    <div class="card">
+      <h2>Set My Weekly Schedule</h2>
+      <div id="scheduleContainer"></div>
+
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn" onclick="saveSchedule()">Save Schedule</button>
+        <button class="btn ghost" onclick="resetSchedule()">Reset Schedule</button>
+        <button class="btn ghost" onclick="showPage('tracker')">Back to Tracker</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Gym Progress Tracker — data stored locally in your browser. Use Download to export JSON + CSV.
+</footer>
+
+<script>
+/* ----------------------
+   Storage keys and state
+   ---------------------- */
+const SCHEDULE_KEY = 'gymSchedule';
+const LOGS_KEY = 'workoutLogs';
+
+let schedule = JSON.parse(localStorage.getItem(SCHEDULE_KEY) || '{}');
+let workoutLogs = JSON.parse(localStorage.getItem(LOGS_KEY) || '{}');
+const WEEKDAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+/* ----------------------
+   Page navigation & top date sync
+   ---------------------- */
+function showPage(page){
+  document.getElementById('tracker').style.display = page === 'tracker' ? 'block' : 'none';
+  document.getElementById('schedule').style.display = page === 'schedule' ? 'block' : 'none';
+  // keep top date synced to trackDate
+  const top = document.getElementById('topDate');
+  const t = document.getElementById('trackDate');
+  if (page === 'tracker') {
+    if (!t.value) t.value = top.value || new Date().toISOString().slice(0,10);
+    loadWorkout();
+  } else {
+    // schedule page: build UI
+    buildScheduleUI();
+  }
+}
+
+function onTopDateChange(){
+  const top = document.getElementById('topDate').value;
+  if (!top) return;
+  document.getElementById('trackDate').value = top;
+  loadWorkout();
+}
+
+/* ----------------------
+   Schedule UI & actions
+   ---------------------- */
+function buildScheduleUI(){
+  const container = document.getElementById('scheduleContainer');
+  container.innerHTML = '';
+  WEEKDAYS.forEach(day => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<h3>${day}</h3>
+      <div id="exlist-${day}"></div>
+      <div style="margin-top:8px">
+        <button class="btn small" onclick="addScheduleExercise('${day}')">+ Add Exercise</button>
+      </div>`;
+    container.appendChild(card);
+
+    // populate existing
+    const existing = schedule[day] || [];
+    existing.forEach(ex => addScheduleExercise(day, ex));
+  });
+}
+
+function addScheduleExercise(day, name=''){
+  const exlist = document.getElementById(`exlist-${day}`);
+  const wrapper = document.createElement('div');
+  wrapper.style.marginTop = '6px';
+  wrapper.style.display = 'flex';
+  wrapper.style.gap = '8px';
+  wrapper.innerHTML = `
+    <input type="text" placeholder="Exercise name" value="${name}" style="flex:1" />
+    <button class="btn small ghost" onclick="this.parentElement.remove()">Remove</button>
+  `;
+  exlist.appendChild(wrapper);
+}
+
+function saveSchedule(){
+  const newSched = {};
+  WEEKDAYS.forEach(day => {
+    const exlist = document.querySelectorAll(`#exlist-${day} input`);
+    newSched[day] = Array.from(exlist).map(i => i.value.trim()).filter(Boolean);
+  });
+  schedule = newSched;
+  localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule));
+  alert('Schedule saved ✅');
+  // trigger silent auto-backup after saving schedule
+  autoBackup();
+  // reload workout if tracker visible
+  if (document.getElementById('tracker').style.display !== 'none') loadWorkout();
+}
+
+function resetSchedule(){
+  if (!confirm('Reset schedule? This will remove all saved week schedule.')) return;
+  schedule = {};
+  localStorage.removeItem(SCHEDULE_KEY);
+  buildScheduleUI();
+  alert('Schedule reset ✅');
+}
+
+/* ----------------------
+   Tracker: dynamic sets
+   ---------------------- */
+function clearWorkoutContainer(){
+  const c = document.getElementById('workoutContainer');
+  c.innerHTML = '';
+}
+
+function loadWorkout(){
+  const date = document.getElementById('trackDate').value;
+  if (!date) {
+    const top = document.getElementById('topDate').value;
+    if (top) document.getElementById('trackDate').value = top;
+    else document.getElementById('trackDate').value = new Date().toISOString().slice(0,10);
+  }
+  const selDate = document.getElementById('trackDate').value;
+  if (!selDate) return;
+  // keep top in sync
+  document.getElementById('topDate').value = selDate;
+
+  const weekday = new Date(selDate).toLocaleDateString('en-US',{weekday:'long'});
+  const exercises = schedule[weekday] || [];
+
+  const container = document.getElementById('workoutContainer');
+  container.innerHTML = `<h3 style="margin-top:0">${weekday} — ${selDate}</h3>`;
+
+  if (exercises.length === 0) {
+    container.innerHTML += `<div class="flex-row" style="color:var(--muted)">No exercises set for ${weekday}. Go to 'Set My Schedule' to add.</div>`;
+    return;
+  }
+
+  exercises.forEach(ex => {
+    const exCard = document.createElement('div');
+    exCard.className = 'exercise';
+    exCard.innerHTML = `
+      <h3>${ex}</h3>
+      <div class="setsContainer" id="sets-${escapeId(selDate+'__'+ex)}"></div>
+      <div style="margin-top:8px">
+        <button class="btn small" onclick="addSetByElement('${selDate}', '${escapeJs(ex)}')">+ Add Set</button>
+      </div>
+    `;
+    container.appendChild(exCard);
+    // populate saved sets if any
+    const saved = (workoutLogs[selDate] && workoutLogs[selDate][ex]) || [];
+    saved.forEach(s => addSetToContainer(selDate, ex, s.reps, s.weight, s.time));
+  });
+}
+
+// helper to create a valid id (escape)
+function escapeId(s) { return s.replace(/[^a-z0-9_\-]/ig,'_'); }
+function escapeJs(s) { return s.replace(/'/g,"\\'").replace(/"/g,'\\"'); }
+
+// Add set using exercise name and date (called by Add Set button)
+function addSetByElement(date, exName){
+  addSetToContainer(date, exName, '', '', '');
+}
+
+function addSetToContainer(date, exName, reps='', weight='', time=''){
+  const cid = `sets-${escapeId(date+'__'+exName)}`;
+  const container = document.getElementById(cid);
+  if (!container) return; // exercise not rendered
+  const idx = container.children.length;
+  const row = document.createElement('div');
+  row.className = 'setRow';
+  row.innerHTML = `
+    <input type="number" placeholder="Reps" value="${reps}" />
+    <input type="number" placeholder="Weight" value="${weight}" />
+    <input type="text" placeholder="Time (s)" value="${time}" />
+    <button class="xbtn" title="Remove set">✖</button>
+  `;
+  // remove handler
+  row.querySelector('.xbtn').onclick = () => row.remove();
+  container.appendChild(row);
+}
+
+/* ----------------------
+   Save / load workout logs
+   ---------------------- */
+function saveWorkout(){
+  const date = document.getElementById('trackDate').value;
+  if (!date) return alert('Select a date first');
+
+  const weekday = new Date(date).toLocaleDateString('en-US',{weekday:'long'});
+  const exercises = schedule[weekday] || [];
+
+  if (!workoutLogs[date]) workoutLogs[date] = {};
+
+  exercises.forEach(ex => {
+    const cid = `sets-${escapeId(date+'__'+ex)}`;
+    const container = document.getElementById(cid);
+    if (!container) {
+      workoutLogs[date][ex] = [];
+      return;
+    }
+    const sets = [];
+    Array.from(container.children).forEach(row => {
+      const inputs = row.querySelectorAll('input');
+      const r = inputs[0].value.trim();
+      const w = inputs[1].value.trim();
+      const t = inputs[2].value.trim();
+      // skip fully empty sets
+      if (r || w || t) sets.push({reps:r, weight:w, time:t});
+    });
+    workoutLogs[date][ex] = sets;
+  });
+
+  localStorage.setItem(LOGS_KEY, JSON.stringify(workoutLogs));
+  alert('Workout saved ✅');
+  // trigger silent auto-backup after saving workout
+  autoBackup();
+}
+
+/* ----------------------
+   Download (JSON + CSV)
+   ---------------------- */
+function downloadData(){
+  workoutLogs = JSON.parse(localStorage.getItem(LOGS_KEY) || '{}');
+  if (Object.keys(workoutLogs).length === 0) return alert('No workout logs to download');
+
+  const today = new Date().toISOString().slice(0,10);
+
+  // JSON
+  const jsonBlob = new Blob([JSON.stringify(workoutLogs, null, 2)], {type:'application/json'});
+  triggerDownload(jsonBlob, `gym_log_${today}.json`);
+
+  // CSV (rows: Date, Day, Exercise, Set, Reps, Weight, Time)
+  const csvRows = [['Date','Day','Exercise','Set','Reps','Weight','Time']];
+  for (const date in workoutLogs) {
+    const day = new Date(date).toLocaleDateString('en-US',{weekday:'long'});
+    const exs = workoutLogs[date];
+    for (const ex in exs) {
+      exs[ex].forEach((s, idx) => {
+        csvRows.push([date, day, ex, idx+1, s.reps || '', s.weight || '', s.time || '']);
+      });
+    }
+  }
+  const csvContent = csvRows.map(r => r.map(field => {
+    const f = (field===null||field===undefined) ? '' : String(field);
+    if (f.includes(',') || f.includes('"') || f.includes('\n')) {
+      return `"${f.replace(/"/g,'""')}"`;
+    }
+    return f;
+  }).join(',')).join('\n');
+  const csvBlob = new Blob([csvContent], {type:'text/csv'});
+  triggerDownload(csvBlob, `gym_log_${today}.csv`);
+}
+
+function triggerDownload(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ----------------------
+   Silent auto-backup
+   ---------------------- */
+function autoBackup(){
+  try {
+    // Always read latest storage content
+    const sched = JSON.parse(localStorage.getItem(SCHEDULE_KEY) || '{}');
+    const logs = JSON.parse(localStorage.getItem(LOGS_KEY) || '{}');
+    const backup = { schedule: sched, logs: logs, created_at: new Date().toISOString() };
+    const ts = new Date().toISOString().replace(/[:T]/g,'-').split('.')[0]; // e.g. 2025-08-08-12-30-00
+    const filename = `gym_backup_${ts}.json`;
+    const blob = new Blob([JSON.stringify(backup, null, 2)], {type: 'application/json'});
+    // trigger download (silent UI-wise)
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    // no alert — silent
+  } catch (e) {
+    console.error('Auto-backup failed', e);
+  }
+}
+
+/* ----------------------
+   Init: set default date & build schedule UI
+   ---------------------- */
+(function init(){
+  schedule = JSON.parse(localStorage.getItem(SCHEDULE_KEY) || '{}');
+  workoutLogs = JSON.parse(localStorage.getItem(LOGS_KEY) || '{}');
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('topDate').value = today;
+  document.getElementById('trackDate').value = today;
+  buildScheduleUI();
+  loadWorkout();
+})();
+</script>
+
+</body>
+</html>
